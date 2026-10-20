@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: c10k-server
+    runtime: docker
+    plan: free
+    region: oregon
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    envVars:
+      - key: HOST
+        value: 0.0.0.0
