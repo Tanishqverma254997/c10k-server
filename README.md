@@ -1,6 +1,6 @@
 ﻿# c10k-server: High-Throughput HTTP Server from Scratch
 
-A zero-dependency, high-concurrency HTTP/1.1 server built entirely with Python standard library sockets and Linux I/O multiplexing. Built to solve the classic C10K problem from first principles, this single-threaded server handles over 54,000 requests per second while concurrently maintaining 10,000 live persistent TCP connections using Linux `epoll`, non-blocking I/O, per-connection stream buffering, and HTTP keep-alive.
+A zero-dependency, high-concurrency HTTP/1.1 server built entirely with Python standard library sockets and Linux I/O multiplexing. Built to solve the classic C10K problem from first principles, this single-threaded server handles over 54,000 requests per second while concurrently maintaining 10,000 live persistent TCP connections using Linux epoll, non-blocking I/O, per-connection stream buffering, and HTTP keep-alive.
 
 ---
 
@@ -8,10 +8,10 @@ A zero-dependency, high-concurrency HTTP/1.1 server built entirely with Python s
 
 In 1999, Dan Kegel framed the **C10K problem**: how can a web server handle 10,000 simultaneous clients on a single commodity machine?
 
-The naive modern intuition is often **multi-threading** (spawning one thread per connection). However, thread-per-connection hits an immovable architectural wall at 10,000 connections:
-1. **Memory Exhaustion**: The default thread stack size on Linux is ~8 MB. Allocating stacks for 10,000 threads consumes roughly **~78 GB of RAM** just for thread stack space alone, causing immediate out-of-memory (OOM) crashes.
-2. **CPU Context-Switching Thrashing**: When the operating system scheduler has to constantly juggle CPU register states across 10,000 threads, the CPU spends virtually all its time switching context rather than processing network bytes.
-3. **OS Thread Limits**: Systems enforce limits on maximum threads per user (`ulimit -u`), causing `pthread_create` to fail.
+The naive modern intuition is often **multi-threading** (spawning one thread per connection). While the default ~8 MB stack per thread on Linux is reserved virtual address space rather than immediately committed physical memory (only touched pages consume real RAM), thread-per-connection fails at 10,000 connections due to:
+1. **OS Thread Limits**: Operating systems enforce hard caps on thread creation (`/proc/sys/kernel/threads-max` and `ulimit -u`), causing `pthread_create` calls to fail once limits are reached.
+2. **Scheduler Overhead & Context Switching**: When the operating system scheduler must juggle execution states across 10,000 threads, the CPU wastes immense time saving and restoring registers and thrashing CPU caches instead of processing network bytes.
+3. **Kernel Memory Overhead**: Even before physical stack memory fills up, each thread requires kernel structures (task structs, kernel stacks) that place heavy pressure on system resources.
 
 To handle 10,000+ concurrent connections on a single machine, we decouple connections from threads. Instead of thousands of threads, we use **a single thread** paired with non-blocking sockets and operating system event multiplexing (`epoll`), allowing the OS kernel to wake our process only when a socket actually has data ready.
 
@@ -19,7 +19,7 @@ To handle 10,000+ concurrent connections on a single machine, we decouple connec
 
 ## Architecture
 
-The server is built around the **Reactor pattern** using Linux's native `epoll` engine (exposed via Python's standard `selectors` module):
+The server is built around the **Reactor pattern** using Linux native epoll engine (exposed via Python standard `selectors` module):
 
 ```
                         +------------------------------------------+
@@ -27,8 +27,8 @@ The server is built around the **Reactor pattern** using Linux's native `epoll` 
                         |            (epoll multiplexer)           |
                         +------------------------------------------+
                                   |                      ^
-               Kernel wakes loop  |                      | Registers ready
-             with ready events    |                      | sockets (READ/WRITE)
+                  Kernel returns  |                      | Process registers
+              only ready sockets  |                      | interest (READ/WRITE)
                                   v                      |
                         +------------------------------------------+
                         |        Single-Threaded Event Loop        |
@@ -49,7 +49,7 @@ The server is built around the **Reactor pattern** using Linux's native `epoll` 
 ```
 
 ### Core Architecture Components
-- **`selectors.DefaultSelector()` (Linux `epoll`)**: Puts the process to sleep with **0% CPU** when idle. When network events occur, the kernel returns only the active sockets in $O(1)$ time.
+- **`selectors.DefaultSelector()` (Linux `epoll`)**: Puts the process to sleep with **0% CPU** when idle. When network events occur, the kernel returns only the active sockets; its cost scales with the number of ready sockets, not total registered sockets.
 - **Connection Draining (`accept_connection`)**: Employs an eager `while True: accept()` loop whenever the listening socket is readable to drain incoming connection bursts without letting the kernel backlog overflow.
 - **Stream Buffering (`in_buffer`)**: TCP delivers an arbitrary stream of bytes, not discrete messages. Incoming bytes are buffered per connection until the HTTP header delimiter (`\r\n\r\n`) is detected.
 - **Non-Blocking Transmit (`out_buffer`)**: Instead of blocking `sendall()`, uses non-blocking `send()`. If the OS socket transmit buffer fills up, the remainder is buffered in `out_buffer` and registered for `EVENT_WRITE` until empty.
@@ -71,18 +71,18 @@ The server is built around the **Reactor pattern** using Linux's native `epoll` 
 
 ```text
 c10k-server/
-??? server.py           # High-throughput epoll HTTP server implementation
-??? benchmark_10k.py    # Non-blocking 10,000 concurrent connection test harness
-??? NOTES.md            # Detailed step-by-step learning notes and systems theory
-??? README.md           # Project architecture, benchmarks, and documentation
-??? .gitignore          # Ignores .venv, __pycache__, and .env
+|-- server.py           # High-throughput epoll HTTP server implementation
+|-- benchmark_10k.py    # Non-blocking 10,000 concurrent connection test harness
+|-- NOTES.md            # Detailed step-by-step learning notes and systems theory
+|-- README.md           # Project architecture, benchmarks, and documentation
+\-- .gitignore          # Ignores .venv, __pycache__, and .env
 ```
 
 ---
 
 ## Setup and Run Steps
 
-### 1. Clone & Enter Project Directory
+### 1. Enter the Project Directory
 ```bash
 cd ~/c10k-server
 ```
@@ -160,7 +160,7 @@ wrk -t 4 -c 10000 -d 30s --latency http://127.0.0.1:8080/
 
 ## Reading These Results: Little's Law & Queueing Time
 
-At first glance, an average latency of **182.16 ms** might seem high for a simple HTTP response whose Python execution time is only ~15 microseconds ($0.015\text{ ms}$). However, this is directly explained by **Little's Law** from queueing theory:
+At first glance, an average latency of **182.16 ms** might seem high for a simple HTTP response whose service time is only about 18 microseconds per request (1 / 54,421 req/s), which includes parsing, formatting, and syscalls. However, this is directly explained by **Little's Law** from queueing theory:
 
 $$L = \lambda \times W$$
 
@@ -175,18 +175,26 @@ $$W = \frac{L}{\lambda} = \frac{10,000}{54,421.13\text{ req/s}} \approx 0.1837\t
 
 Our empirically measured average latency of **182.16 ms** matches theoretical Little's Law to within 1%. 
 
-This reveals a fundamental systems insight: **the measured 182 ms is virtually 100% queueing delay**. Because 10,000 requests are submitted concurrently to a single CPU thread, each request waits in line while preceding requests in the batch are processed. The absence of tail latency jitter (p99 is 208 ms, standard deviation is only 9 ms) demonstrates smooth, predictable event loop scheduling with zero connection starvation.
+This reveals a fundamental systems insight: **the measured 182 ms is almost entirely queueing delay**. Because 10,000 requests are submitted concurrently to a single CPU thread, each request waits in line while preceding requests in the batch are processed. The absence of tail latency jitter (p99 is 208 ms, standard deviation is only 9 ms) demonstrates smooth, predictable event loop scheduling with 0 timeouts and 0 errors during the run.
+
+---
+
+## Benchmark Caveats
+
+While the benchmark validates the architectural capability of holding and serving 10,000 concurrent connections, several real-world factors should be noted:
+- **Shared Machine Resources**: Both `wrk` and the Python server ran on the same host machine, competing for the same underlying CPU cores, caches, and memory bandwidth.
+- **Loopback Interface Traffic**: Tests were conducted over `127.0.0.1`, which bypasses physical network hardware, NIC interrupts, cable latency, and real-world packet drops.
+- **Minimal Static Payload**: The server returns a lightweight static response (~156 bytes), minimizing memory allocation, serialization, and TCP fragmentation overhead.
+- **Closed-Loop Load Generation**: `wrk` is a closed-loop load generator (each client connection waits to receive a response before issuing its next request). Closed-loop benchmarks mask queueing spikes compared to open-loop Poisson arrival traffic, making measured tail latencies (p99) optimistic.
+- **WSL2 Virtualization Overhead**: Running Linux within WSL2 introduces Hyper-V virtualization and Windows-to-WSL network translation overhead compared to bare-metal Linux.
 
 ---
 
 ## Known Limitations
 
 The current `server.py` implementation is an educational, minimalist baseline. It intentionally omits several production features:
-1. **No Timeouts**: Sockets do not track idle or read/write timestamps. Slow or stalled clients (e.g. Slowloris attacks) can hold connections open indefinitely.
-2. **No Header Size Limit**: Incoming headers are accumulated in `in_buffer` until `\r\n\r\n` is encountered. A client streaming endless headers without a boundary will cause unbounded buffer memory growth.
-3. **No Connection Cap**: The server accepts all incoming TCP handshakes without enforcing a maximum active connection ceiling (`max_connections`), which could lead to resource exhaustion under extreme connection storms.
-4. **No Request Body Parsing**: Only HTTP headers are parsed. Payloads sent via `POST` or `PUT` methods (`Content-Length` or `Transfer-Encoding: chunked`) are not read or consumed.
-5. **No Graceful Shutdown**: Halting the process (`SIGINT` / `Ctrl+C`) terminates immediately without draining active client buffers or allowing in-flight responses to finish transmitting.
+1. **No Chunked Transfer Encoding**: Only fixed-length request bodies specified by `Content-Length` are parsed (`Transfer-Encoding: chunked` streaming is not yet supported).
+2. **Single Core Only**: Runs on a single process and thread, utilizing at most one CPU core and leaving remaining cores idle.
 
 ---
 

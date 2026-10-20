@@ -1,11 +1,13 @@
-﻿import socket
+import socket
 import selectors
 import resource
 import time
+import os
 
-HOST = '127.0.0.1'
-PORT = 8080
-TARGET_CONNECTIONS = 10000
+HOST = os.environ.get('HOST', '127.0.0.1')
+PORT = int(os.environ.get('PORT', 8080))
+TARGET_CONNECTIONS = int(os.environ.get('TARGET_CONNECTIONS', 10000))
+HOLD_TIME = float(os.environ.get('HOLD_TIME', 3.0))  # Default 3.0s (< server's 5.0s IDLE_TIMEOUT)
 
 def check_connection(sock):
     """
@@ -17,7 +19,7 @@ def check_connection(sock):
     return (err == 0, err)
 
 def run_benchmark():
-    # Unlock client file descriptor limit so we can open 10,000 outgoing sockets
+    # Unlock client file descriptor limit so we can open 10,000+ outgoing sockets
     soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
     resource.setrlimit(resource.RLIMIT_NOFILE, (min(65536, hard), hard))
     current_soft, _ = resource.getrlimit(resource.RLIMIT_NOFILE)
@@ -28,10 +30,10 @@ def run_benchmark():
     successful_sockets = []
     failed_sockets = []
 
-    print(f"[*] Launching {TARGET_CONNECTIONS} non-blocking connections to {HOST}:{PORT}...")
+    print(f"[*] Launching {TARGET_CONNECTIONS} non-blocking connections to {HOST}:{PORT} (Hold Time: {HOLD_TIME}s)...")
     start_time = time.time()
 
-    # Step 1: Initiate 10,000 non-blocking TCP handshakes
+    # Step 1: Initiate non-blocking TCP handshakes
     for i in range(1, TARGET_CONNECTIONS + 1):
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.setblocking(False)
@@ -89,13 +91,16 @@ def run_benchmark():
         print(f"[!] Failure breakdown by errno: {errors}")
 
     if successful_sockets:
-        print(f"[*] Holding {len(successful_sockets)} active sockets open for 10 seconds...")
+        print(f"[*] Holding {len(successful_sockets)} active sockets open for {HOLD_TIME} seconds...")
         print(f"[*] Check your server terminal to verify the count!")
-        time.sleep(10)
+        time.sleep(HOLD_TIME)
 
     print("\n[*] Gracefully closing all sockets...")
     for s in all_sockets:
-        s.close()
+        try:
+            s.close()
+        except Exception:
+            pass
     selector.close()
     print("[*] Benchmark complete!")
 
