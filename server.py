@@ -96,6 +96,9 @@ class ClientConnection:
                 return
 
             # Extract header text to parse Request-Line and Content-Length
+            if delim_idx + 4 > MAX_HEADER_SIZE:
+                self.send_error_and_close("431 Request Header Fields Too Large", "431 Request Header Fields Too Large\n")
+                return
             header_bytes = bytes(self.in_buffer[:delim_idx])
 
             # Security check: reject NUL bytes, bare \r, or bare \n in header block
@@ -128,9 +131,21 @@ class ClientConnection:
             # 2. Parse Headers
             headers = {}
             for line in lines[1:]:
-                if ":" in line:
-                    key, val = line.split(":", 1)
-                    headers[key.strip().lower()] = val.strip()
+                if ":" not in line:
+                    self.send_error_and_close("400 Bad Request", "400 Bad Request: Malformed header\n")
+                    return
+                key, val = line.split(":", 1)
+                if not key or any(c not in "!#$%&'*+-.^_`|~0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ" for c in key):
+                    self.send_error_and_close("400 Bad Request", "400 Bad Request: Invalid header name\n")
+                    return
+                key = key.lower()
+                if key in headers and key in ("content-length", "transfer-encoding", "host"):
+                    self.send_error_and_close("400 Bad Request", "400 Bad Request: Duplicate framing or Host header\n")
+                    return
+                if key == "connection" and key in headers:
+                    headers[key] += "," + val.strip()
+                else:
+                    headers[key] = val.strip()
 
             # Reject Transfer-Encoding (chunked, etc.) with 501 Not Implemented
             if "transfer-encoding" in headers:
@@ -144,6 +159,8 @@ class ClientConnection:
             content_length = 0
             if "content-length" in headers:
                 try:
+                    if not headers["content-length"].isascii() or not headers["content-length"].isdigit():
+                        raise ValueError()
                     content_length = int(headers["content-length"])
                     if content_length < 0:
                         raise ValueError()
@@ -179,11 +196,11 @@ class ClientConnection:
         self.request_count += 1
 
         # Connection lifecycle: HTTP/1.1 defaults to keep-alive; HTTP/1.0 defaults to close
-        conn_header = headers.get("connection", "").lower()
+        conn_tokens = {token.strip().lower() for token in headers.get("connection", "").split(",")}
         if version == "HTTP/1.1":
-            self.keep_alive = (conn_header != "close")
+            self.keep_alive = "close" not in conn_tokens
         else:  # HTTP/1.0
-            self.keep_alive = (conn_header == "keep-alive")
+            self.keep_alive = "keep-alive" in conn_tokens and "close" not in conn_tokens
 
         # Routing table
         if path == "/echo":
