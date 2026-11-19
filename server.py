@@ -5,6 +5,8 @@ import time
 import signal
 import sys
 import os
+import json
+from pathlib import Path
 
 HOST = os.environ.get('HOST', '127.0.0.1')
 PORT = int(os.environ.get('PORT', 8080))
@@ -17,6 +19,20 @@ MAX_CONNECTIONS = int(os.environ.get('MAX_CONNECTIONS', 15000))
 SHUTDOWN_TIMEOUT = float(os.environ.get('SHUTDOWN_TIMEOUT', 5.0))
 
 active_connections = 0
+peak_connections = 0
+started_at = time.monotonic()
+# Load only explicitly published files once; request handling never reads disk.
+STATIC_DIR = Path(__file__).resolve().parent / 'static'
+STATIC_ASSETS = {
+    '/': ('index.html', 'text/html; charset=utf-8'),
+    '/assets/app.css': ('app.css', 'text/css; charset=utf-8'),
+    '/assets/app.js': ('app.js', 'text/javascript; charset=utf-8'),
+    '/favicon.svg': ('favicon.svg', 'image/svg+xml'),
+}
+STATIC_ASSETS = {
+    route: ((STATIC_DIR / filename).read_bytes(), content_type)
+    for route, (filename, content_type) in STATIC_ASSETS.items()
+}
 # Track active connection instances for periodic idle timeout sweeps & graceful shutdown
 active_clients = set()
 shutdown_requested = False
@@ -44,7 +60,7 @@ selector = selectors.DefaultSelector()
 class ClientConnection:
     """Tracks state and persistent connection lifecycle for an individual client."""
     def __init__(self, sock, addr):
-        global active_connections, active_clients
+        global active_connections, active_clients, peak_connections
         self.sock = sock
         self.addr = addr
         self.in_buffer = bytearray()
@@ -58,6 +74,7 @@ class ClientConnection:
         
         active_clients.add(self)
         active_connections += 1
+        peak_connections = max(peak_connections, active_connections)
         if active_connections % 1000 == 0 or active_connections == 1:
             print(f"[+] Active Connections: {active_connections}")
 
@@ -194,6 +211,7 @@ class ClientConnection:
 
     def dispatch_request(self, method, path, version, headers, body_bytes, first_line):
         self.request_count += 1
+        path = path.partition('?')[0]
 
         # Connection lifecycle: HTTP/1.1 defaults to keep-alive; HTTP/1.0 defaults to close
         conn_tokens = {token.strip().lower() for token in headers.get("connection", "").split(",")}
@@ -203,7 +221,21 @@ class ClientConnection:
             self.keep_alive = "keep-alive" in conn_tokens and "close" not in conn_tokens
 
         # Routing table
-        if path == "/echo":
+        if path in STATIC_ASSETS:
+            if method not in ('GET', 'HEAD'):
+                self.send_response('405 Method Not Allowed', '405 Method Not Allowed\n',
+                                   version=version, extra_headers={'Allow': 'GET, HEAD'})
+                return
+            asset, content_type = STATIC_ASSETS[path]
+            self.send_response('200 OK', asset, version=version,
+                               is_head=(method == 'HEAD'), extra_headers={
+                                   'Content-Type': content_type,
+                                   'Cache-Control': 'no-cache',
+                                   'X-Content-Type-Options': 'nosniff',
+                                   'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
+                                   'Referrer-Policy': 'strict-origin-when-cross-origin',
+                               })
+        elif path == "/echo":
             if method not in ("POST", "GET"):
                 self.send_response(
                     status="405 Method Not Allowed",
@@ -219,17 +251,6 @@ class ClientConnection:
                 version=version,
                 extra_headers={"Content-Type": content_type}
             )
-        elif path == "/":
-            if method not in ("GET", "HEAD"):
-                self.send_response(
-                    status="405 Method Not Allowed",
-                    body=f"405 Method Not Allowed: {method}\n",
-                    version=version,
-                    extra_headers={"Allow": "GET, HEAD"}
-                )
-                return
-            body = f"Hello! Request #{self.request_count} on this socket. ({first_line})\n"
-            self.send_response("200 OK", body, version=version, is_head=(method == "HEAD"))
         elif path == "/health":
             if method not in ("GET", "HEAD"):
                 self.send_response(
@@ -249,12 +270,17 @@ class ClientConnection:
                     extra_headers={"Allow": "GET, HEAD"}
                 )
                 return
-            body = f'{{"status": "ok", "active_connections": {active_connections}}}\n'
+            body = json.dumps({
+                'status': 'ok',
+                'active_connections': active_connections,
+                'peak_connections': peak_connections,
+                'uptime_seconds': round(time.monotonic() - started_at, 1),
+            }) + '\n'
             self.send_response(
                 "200 OK",
                 body,
                 version=version,
-                extra_headers={"Content-Type": "application/json"},
+                extra_headers={"Content-Type": "application/json", "Cache-Control": "no-store"},
                 is_head=(method == "HEAD")
             )
         else:

@@ -6,6 +6,14 @@ A 10-second local test on an Azure B2ts_v2 VM observed **10,000 simultaneous ben
 
 **Live health endpoint:** https://tanishq-c10k-server.centralindia.cloudapp.azure.com/health
 
+## Interactive dashboard
+
+The root route (`/`) serves a responsive project dashboard with architecture, clearly labeled recorded benchmarks, live backend status, and a request playground for `/echo`, `/health`, and `/status`. It uses self-hosted HTML, CSS, and JavaScript with no frontend runtime dependencies or build step. Echo responses are displayed as text, and the dashboard does not run load tests from visitors' browsers.
+
+Run `python3 server.py` and open **http://127.0.0.1:8080/** locally on Linux, or use the Docker instructions below. Windows and macOS can use Docker with Linux containers. The existing Azure VM needs the [dashboard update steps](DEPLOYMENT.md#update-the-existing-vm-to-the-dashboard-release) before the root of its public HTTPS URL serves this release.
+
+Live connection counts represent backend sockets, not visitors; process uptime and peak connections reset on restart. The recorded C10K benchmark is a separate local backend measurement.
+
 ---
 
 ## Why This Project Exists: The C10K Problem
@@ -77,6 +85,10 @@ The server is built around the **Reactor pattern** using Linux native epoll engi
 ```text
 c10k-server/
 |-- server.py           # High-throughput epoll HTTP server implementation
+|-- static/             # Dashboard HTML, CSS, JavaScript, and favicon
+|-- scripts/deploy.sh   # Candidate checks, backend update, and failure rollback
+|-- tests/              # Socket regressions and browser interaction logic checks
+|-- DEPLOYMENT.md       # Azure/Caddy setup, updates, and measured results
 |-- benchmark_10k.py    # Non-blocking 10,000 concurrent connection test harness
 |-- Dockerfile          # Hardened Python 3.12-slim non-root container image
 |-- .dockerignore       # Build context exclusion rules (.venv, .git, etc.)
@@ -249,9 +261,10 @@ curl -i https://<YOUR_APP>.onrender.com/
 **Expected Response:**
 ```http
 HTTP/2 200 
-content-type: text/plain; charset=utf-8
+content-type: text/html; charset=utf-8
 
-Hello! Request #1 on this socket. (GET / HTTP/1.1)
+<!doctype html>
+...
 ```
 
 #### 3. Verify HTTP/1.1 Persistent Keep-Alive Connection Reuse

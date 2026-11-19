@@ -11,4 +11,10 @@ jobs:
         with:
           python-version: '3.12'
       - run: python -m unittest discover -s tests -v
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node --check static/app.js
+      - run: node --test tests/test_frontend.cjs
+      - run: bash -n scripts/deploy.sh
       - run: docker build -t c10k-server:ci .
