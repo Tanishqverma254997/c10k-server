@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0c1117">
+  <meta name="description" content="An HTTP/1.1 server built from scratch in Python. Explore the architecture, inspect live health, and try the echo endpoint. Verified at 10,000 concurrent backend connections.">
+  <title>C10K Server · Built from the socket up</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <link rel="stylesheet" href="/assets/app.css">
+  <script src="/assets/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="site-header wrap">
+    <a class="brand" href="#" aria-label="C10K Server home"><img src="/favicon.svg" width="36" height="36" alt=""><span>c10k<span class="brand-light"> / server</span></span></a>
+    <nav aria-label="Main navigation"><a href="#playground">Playground</a><a href="#benchmarks">Benchmarks</a><a href="#architecture">Architecture</a></nav>
+    <a class="button button-small" href="https://github.com/Tanishqverma254997/c10k-server" target="_blank" rel="noopener noreferrer">View source <span aria-hidden="true">&lt;/&gt;</span></a>
+  </header>
+  <main id="main">
+    <section class="hero wrap" aria-labelledby="hero-title">
+      <div class="hero-copy">
+        <p class="eyebrow"><span class="tiny-line"></span> A SYSTEMS ENGINEERING PROJECT</p>
+        <h1 id="hero-title">One process.<br>Ten thousand<br><span>connections.</span></h1>
+        <p class="hero-description">An HTTP/1.1 server built from the socket up.<br class="desktop-only"> Python, Linux epoll, and zero runtime dependencies.</p>
+        <div class="hero-actions"><a class="button button-primary" href="#playground">Try the live server</a><a class="text-link" href="#architecture">Explore the architecture</a></div>
+        <p class="author">Designed &amp; built by <a href="https://github.com/Tanishqverma254997" target="_blank" rel="noopener noreferrer">Tanishq Verma</a><span class="author-divider">/</span>Deployed on Azure</p>
+      </div>
+      <div class="event-card" aria-label="Schematic of the server event loop">
+        <div class="card-top"><span class="mono">INSIDE THE EVENT LOOP</span><span class="schematic-tag">SCHEMATIC</span></div>
+        <div class="socket-grid" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+        <p class="socket-caption mono">MANY CLIENT SOCKETS</p>
+        <div class="diagram-connector" aria-hidden="true"></div>
+        <div class="epoll-box"><span class="epoll-mark" aria-hidden="true">⌘</span><div><strong>epoll</strong><span>Wait for readiness. Process what’s ready.</span></div><span class="kernel-label mono">LINUX KERNEL</span></div>
+        <div class="diagram-connector short" aria-hidden="true"></div>
+        <div class="loop-box"><span class="loop-symbol" aria-hidden="true">↻</span><div><strong>One event loop</strong><span>No thread per connection.</span></div><span class="python-tag mono">PYTHON</span></div>
+        <div class="event-footer"><span class="mono">accept → read → parse → write</span><span class="green-text mono">repeat</span></div>
+      </div>
+    </section>
+
+    <section class="benchmark-strip wrap" aria-label="Recorded benchmark highlights">
+      <div class="strip-caption"><span class="eyebrow">MEASURED, NOT SIMULATED</span><span>10-second local backend test</span></div>
+      <div class="strip-stats"><div><strong>10,000</strong><span>Concurrent connections</span></div><div><strong>29.7<span>k</span></strong><span>Requests per second</span></div><div><strong>319<span>ms</span></strong><span>Average latency</span></div><div><strong>0</strong><span>Reported errors</span></div></div>
+      <p class="strip-note">Recorded results · Client and server shared one Azure VM · Direct backend traffic, without TLS. <a href="#benchmarks">See test conditions</a></p>
+    </section>
+
+    <section id="playground" class="section wrap" aria-labelledby="playground-title">
+      <div class="section-heading"><div><p class="eyebrow">MAKE A REAL REQUEST</p><h2 id="playground-title">A small server. A live playground.</h2></div><span class="section-note mono">Your browser ↔ this Python server</span></div>
+      <div class="playground-grid">
+        <section class="panel live-panel" aria-labelledby="live-title">
+          <div class="panel-heading"><h3 id="live-title">Server pulse</h3><span id="health-badge" class="status-badge" data-state="checking"><span class="status-dot"></span><span id="health-label">Checking</span></span></div>
+          <p class="muted">Real measurements from this deployment.</p>
+          <dl class="live-metrics"><div><dt>Active backend connections</dt><dd id="live-connections">—</dd></div><div><dt>Peak since process start</dt><dd id="live-peak">—</dd></div><div><dt>Process uptime</dt><dd id="live-uptime">—</dd></div><div><dt>Browser round trip</dt><dd id="live-roundtrip">—</dd></div></dl>
+          <div class="live-footer"><p id="last-checked" role="status">Waiting for the first check…</p><button id="refresh-status" class="icon-button" type="button" aria-label="Refresh server status">↻</button></div>
+          <p class="fine-print">Checks every 15 seconds while this tab is visible. Counts represent backend sockets, including proxy and health-check connections—not visitors. Round trip includes network and proxy time.</p>
+        </section>
+        <section class="panel request-panel" aria-labelledby="request-title">
+          <div class="panel-heading"><h3 id="request-title">Request playground</h3><span class="mono muted">SAME-ORIGIN API</span></div>
+          <div class="endpoint-tabs" role="group" aria-label="Choose an endpoint"><button type="button" data-endpoint="echo" aria-pressed="true"><span class="method post">POST</span> /echo</button><button type="button" data-endpoint="health" aria-pressed="false"><span class="method">GET</span> /health</button><button type="button" data-endpoint="status" aria-pressed="false"><span class="method">GET</span> /status</button></div>
+          <form id="request-form"><div class="request-label"><label id="payload-label" for="payload">Request body</label><span id="payload-size" class="mono muted">0 / 4,096 bytes</span></div><textarea id="payload" rows="4" maxlength="4096" spellcheck="false">Hello, C10K! Sent from a browser, echoed by a server built from scratch.</textarea><p id="endpoint-help" class="fine-print">The server returns the exact UTF-8 bytes you send.</p><div class="request-actions"><button id="send-request" class="button button-primary" type="submit">Send request</button><button id="copy-curl" class="text-button" type="button">Copy curl</button><span id="copy-feedback" class="fine-print" role="status"></span></div></form>
+          <div class="response-heading"><span class="mono">RESPONSE</span><span id="response-meta" class="mono muted" role="status">No request sent yet</span></div><pre id="response-body" class="response-body" tabindex="0" aria-label="Response body">Send a request to see the real response here.</pre>
+        </section>
+      </div>
+      <noscript><p class="noscript-note">Live checks and the playground need JavaScript. You can still open <a href="/health">/health</a> or <a href="/status">/status</a> directly.</p></noscript>
+    </section>
+
+    <section id="benchmarks" class="section wrap" aria-labelledby="benchmarks-title">
+      <div class="section-heading"><div><p class="eyebrow">THE EVIDENCE</p><h2 id="benchmarks-title">The numbers, with context.</h2></div><a class="text-link" href="https://github.com/Tanishqverma254997/c10k-server/blob/main/DEPLOYMENT.md#verified-10000-connection-baseline" target="_blank" rel="noopener noreferrer">Read the benchmark notes</a></div>
+      <div class="results-layout"><div class="panel results-panel"><div class="panel-heading"><h3>Recorded direct-backend runs</h3><span class="tag mono">wrk · 10s</span></div><div class="table-scroll"><table><caption class="sr-only">Recorded direct-container backend benchmark runs on the same Azure VM</caption><thead><tr><th scope="col">Connections</th><th scope="col">Requests / sec</th><th scope="col">Avg latency</th><th scope="col">p99 latency</th></tr></thead><tbody><tr><th scope="row">5,000</th><td>32,885.93</td><td>148.52 ms</td><td>166.09 ms</td></tr><tr class="highlight-row"><th scope="row">10,000 <span class="tag">Verified</span></th><td>29,746.23</td><td>319.20 ms</td><td>420.43 ms</td></tr></tbody></table></div><p class="fine-print">Both runs reported no errors. The 10,000-connection run followed a host connection-tracking fix; the runs are not a controlled scaling comparison. “Verified” means a live status probe observed 10,001 sockets, including itself.</p></div><aside class="conditions"><h3>What was tested?</h3><dl><div><dt>Machine</dt><dd>Azure B2ts_v2 · 2 vCPUs · 1 GiB</dd></div><div><dt>Workload</dt><dd>GET /health · HTTP keep-alive</dd></div><div><dt>Load generator</dt><dd>wrk · 2 threads · same VM</dd></div><div><dt>Network path</dt><dd>Internal Docker IP · no Caddy or TLS</dd></div></dl><p>Short local results are a baseline, not a guarantee of sustained performance or public HTTPS capacity.</p></aside></div>
+      <article class="engineering-note"><div class="note-icon mono" aria-hidden="true">!</div><div><p class="eyebrow">A BOTTLENECK BEYOND THE CODE</p><h3>7,168 tracking entries. A hard-to-see ceiling.</h3><p>The first 10,000-connection attempt stalled below the target. Kernel logs exposed a full Linux connection-tracking table. Raising its limit to 65,536 enabled a subsequent run to reach 10,000 benchmark sockets. Debugging the host mattered as much as writing the server.</p></div><div class="note-code mono"><span>nf_conntrack_max</span><strong><s>7168</s> <span>65536</span></strong></div></article>
+    </section>
+
+    <section id="architecture" class="section wrap" aria-labelledby="architecture-title"><div class="section-heading"><div><p class="eyebrow">BUILT FROM FIRST PRINCIPLES</p><h2 id="architecture-title">Every layer has a job.</h2></div><span class="section-note">No web framework. No hidden request server.</span></div>
+      <div class="architecture-path" aria-label="Request flow"><div><span class="path-icon" aria-hidden="true">◎</span><strong>Browser</strong><span>HTTPS request</span></div><span class="path-connector" aria-hidden="true"></span><div><span class="path-icon" aria-hidden="true">◇</span><strong>Caddy</strong><span>TLS &amp; reverse proxy</span></div><span class="path-connector" aria-hidden="true"></span><div class="path-focus"><span class="path-icon" aria-hidden="true">&lt;/&gt;</span><strong>Python server</strong><span>Parse, route &amp; respond</span></div><span class="path-connector" aria-hidden="true"></span><div><span class="path-icon" aria-hidden="true">⌘</span><strong>Linux epoll</strong><span>Socket readiness</span></div></div>
+      <div class="principles"><article><span class="mono principle-label">I/O MODEL</span><h3>Wait on events, not threads.</h3><p>One selector watches non-blocking sockets. The event loop handles ready connections while each client keeps its own input and output buffers.</p></article><article><span class="mono principle-label">HTTP LIFECYCLE</span><h3>Keep the connection useful.</h3><p>HTTP/1.0 and HTTP/1.1 handling, persistent connections, request bodies, partial writes, and graceful shutdown—all implemented explicitly.</p></article><article><span class="mono principle-label">GUARDRAILS</span><h3>Bound what a client can ask.</h3><p>Header and body limits, idle timeouts, a connection cap, and strict framing checks. Socket-level regression tests cover core behaviors.</p></article></div>
+    </section>
+    <section class="closing wrap"><div><p class="eyebrow">READ THE IMPLEMENTATION</p><h2>The interesting part is under the hood.</h2><p>Follow the sockets, inspect the parser, or reproduce the benchmark.</p></div><a class="button button-primary" href="https://github.com/Tanishqverma254997/c10k-server" target="_blank" rel="noopener noreferrer">Explore the repository <span aria-hidden="true">&lt;/&gt;</span></a></section>
+  </main>
+  <footer class="site-footer wrap"><a class="brand" href="#">c10k<span class="brand-light"> / server</span></a><p>Built by Tanishq Verma · Python standard library · Azure</p><a href="/health">Health endpoint</a></footer>
+</body>
+</html>

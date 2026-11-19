@@ -7,6 +7,8 @@ import subprocess
 import sys
 import time
 import unittest
+import json
+from html.parser import HTMLParser
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -76,6 +78,65 @@ class ServerTests(unittest.TestCase):
     def test_binary_echo(self):
         status, _, body = self.raw(b"POST /echo HTTP/1.1\r\nHost: localhost\r\nContent-Length: 4\r\nConnection: close\r\n\r\n\x00\xffhi")
         self.assertEqual((status, body), (200, b"\x00\xffhi"))
+
+    def test_dashboard_and_referenced_assets(self):
+        status, headers, body = self.raw(b"GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+        self.assertEqual(status, 200)
+        self.assertIn(("Content-Type", "text/html; charset=utf-8"), headers)
+        self.assertIn(("X-Content-Type-Options", "nosniff"), headers)
+        self.assertIn(b'One process.', body)
+        self.assertIn(b'not a guarantee of sustained performance', body)
+        asset_paths = []
+
+        class AssetParser(HTMLParser):
+            def handle_starttag(self, tag, attrs):
+                attributes = dict(attrs)
+                if tag in ('script', 'img') and attributes.get('src', '').startswith('/'):
+                    asset_paths.append(attributes['src'])
+                if tag == 'link' and attributes.get('href', '').startswith('/'):
+                    asset_paths.append(attributes['href'])
+
+        AssetParser().feed(body.decode())
+        self.assertGreaterEqual(len(set(asset_paths)), 3)
+        for path in set(asset_paths):
+            with self.subTest(path=path):
+                status, headers, asset = self.raw(f"GET {path}?v=1 HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n".encode())
+                self.assertEqual(status, 200)
+                self.assertTrue(asset)
+                types = dict(headers)
+                self.assertEqual(int(types['Content-Length']), len(asset))
+                self.assertNotIn('text/html', types['Content-Type'])
+
+    def test_asset_head_methods_and_no_file_disclosure(self):
+        conn = http.client.HTTPConnection('127.0.0.1', self.port, timeout=2)
+        try:
+            conn.request('HEAD', '/assets/app.js')
+            response = conn.getresponse()
+            self.assertEqual(response.status, 200)
+            self.assertGreater(int(response.getheader('Content-Length')), 0)
+            self.assertEqual(response.read(), b'')
+            conn.request('GET', '/assets/app.js')
+            response = conn.getresponse()
+            self.assertIn(b'checkStatus', response.read())
+        finally:
+            conn.close()
+        for path, method, expected in [
+            ('/', 'POST', 405), ('/assets/app.css', 'POST', 405),
+            ('/assets/../server.py', 'GET', 404), ('/server.py', 'GET', 404),
+            ('/assets/%2e%2e/server.py', 'GET', 404), ('/.git/config', 'GET', 404),
+        ]:
+            with self.subTest(path=path, method=method):
+                status, _, _ = self.raw(f'{method} {path} HTTP/1.1\r\nHost: localhost\r\nContent-Length: 0\r\nConnection: close\r\n\r\n'.encode())
+                self.assertEqual(status, expected)
+
+    def test_status_exposes_real_process_metrics(self):
+        status, headers, body = self.raw(b'GET /status HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n')
+        self.assertEqual(status, 200)
+        self.assertIn(('Cache-Control', 'no-store'), headers)
+        data = json.loads(body)
+        self.assertGreaterEqual(data['active_connections'], 1)
+        self.assertGreaterEqual(data['peak_connections'], data['active_connections'])
+        self.assertGreaterEqual(data['uptime_seconds'], 0)
 
     def test_oversized_complete_and_partial_headers(self):
         for ending in (b"", b"\r\n\r\n"):

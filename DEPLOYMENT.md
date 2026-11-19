@@ -137,6 +137,38 @@ Retrieve the IP for each run rather than hardcoding it: Docker may assign a diff
 
 ## Operational checks and follow-up work
 
+### Update the existing VM to the dashboard release
+
+The root route now serves a self-contained dashboard; no frontend build or JavaScript runtime is required on the VM. The Python process preloads a fixed allowlist of HTML, CSS, JavaScript, and SVG files, and Docker includes these assets. The API routes remain available. The dashboard fetches same-origin status and echo responses; it never starts a load test from a visitor's browser.
+
+From the VM's existing SSH session:
+
+```bash
+cd ~/c10k-server
+git fetch origin
+git switch main
+git pull --ff-only origin main
+sudo bash scripts/deploy.sh
+```
+
+The deployment script runs Python regression tests, builds an image tagged with the source revision, and verifies a candidate container with no external network access. Only then does it briefly stop and replace the backend on loopback port 8080. It verifies the new container and restores the previous backend automatically if the replacement fails. Caddy and its certificate volumes continue running. The script uses the known settings of this deployment; adapt it before using on a host with different environment variables, ports, mounts, or resource limits. Do not run two updates concurrently.
+
+Successful updates retain the previous stopped container and its image for manual rollback. Each update can retain another backup; inspect and remove obsolete backups once the release is verified. The script does not change host sysctls or Azure resources, and has not yet been executed on the user's Azure VM.
+
+The script defaults to a 65,536 file-descriptor limit, as verified on this Azure VM. For development hosts with a lower hard limit, set `C10K_NOFILE_LIMIT` to a supported value when running the script. The workspace container smoke test used 16,384; that override does not change the Azure default.
+
+Open the existing HTTPS hostname at `/` after updating. `/health` still returns plain text. The root route previously returned a text greeting; it now returns HTML. `/status` adds real `peak_connections` and `uptime_seconds` fields. All process metrics reset when the backend restarts, so the live peak is distinct from the recorded benchmark.
+
+Development checks (Node.js is only needed for JavaScript checks):
+
+```bash
+python3 -m unittest discover -s tests -v
+node --check static/app.js
+node --test tests/test_frontend.cjs
+```
+
+The dashboard handles loading, server failures, timeouts, UTF-8 request limits, clipboard failures, keyboard navigation, reduced motion, and narrow layouts. Its static asset routes do not allow arbitrary file paths. Echo output is rendered as text. JavaScript is self-hosted and governed by a same-origin Content Security Policy. Browser visual verification depends on an available browser QA environment.
+
 ```bash
 sudo docker ps
 sudo docker logs --tail 40 c10k-server

@@ -5,6 +5,7 @@ WORKDIR /app
 RUN useradd -u 10001 -U -s /usr/sbin/nologin -M appuser
 
 COPY --chown=appuser:appuser server.py .
+COPY --chown=appuser:appuser static/ ./static/
 
 USER appuser
 

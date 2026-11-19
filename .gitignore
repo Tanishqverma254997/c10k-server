@@ -12,6 +12,9 @@ __pycache__/
 .env
 .env.local
 
+# Deployment-specific proxy configuration (documented in DEPLOYMENT.md)
+/Caddyfile
+
 # IDE & OS Artifacts
 .vscode/
 .idea/
