@@ -1,6 +1,10 @@
 # c10k-server: High-Throughput HTTP Server from Scratch
 
-A zero-dependency, high-concurrency HTTP/1.1 server built entirely with Python standard library sockets and Linux I/O multiplexing. Built to solve the classic C10K problem from first principles, this single-threaded server handles over 54,000 requests per second while concurrently maintaining 10,000 live persistent TCP connections using Linux epoll, non-blocking I/O, per-connection stream buffering, and HTTP keep-alive.
+A zero-dependency, high-concurrency HTTP/1.1 server built with Python standard library sockets, Linux epoll, non-blocking I/O, per-connection buffering, and HTTP keep-alive.
+
+A 10-second local test on an Azure B2ts_v2 VM observed **10,000 simultaneous benchmark connections** and **29,746 requests/sec**, with no reported errors. The load generator shared the VM and targeted the backend directly; this is not a sustained-load or public HTTPS capacity measurement. See [deployment setup and benchmark evidence](DEPLOYMENT.md) for the configuration, results, and limitations.
+
+**Live health endpoint:** https://tanishq-c10k-server.centralindia.cloudapp.azure.com/health
 
 ---
 
